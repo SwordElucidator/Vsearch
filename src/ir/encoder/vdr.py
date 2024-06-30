@@ -10,8 +10,8 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer, BertConfig, BatchEncoding, PreTrainedModel
 
-from .sparsify_utils import build_bow_mask, build_topk_mask, elu1p
-from .visualize_utils import wordcloud_from_dict
+from ..utils.sparsify_utils import build_bow_mask, build_topk_mask, elu1p
+from ..utils.visualize_utils import wordcloud_from_dict
 
 
 logger = logging.getLogger(__name__)
@@ -83,10 +83,11 @@ class VDREncoder(PreTrainedModel):
 
     def encode(
         self,
-        texts: List[str], 
+        texts: Union[List[str], str], 
         max_len: int = None, 
     ) -> BatchEncoding:
         max_len = max_len or self.config.max_len
+        texts = [texts] if isinstance(texts, str) else texts
         encoding = self.tokenizer.batch_encode_plus(texts, padding="max_length", truncation=True, max_length=max_len, return_tensors='pt')
         encoding = encoding.to(self.device)
         return encoding
@@ -98,7 +99,7 @@ class VDREncoder(PreTrainedModel):
         max_len: int = None, 
         topk: int = None,
         bow: bool = False, 
-        training: bool = False,
+        require_grad: bool = False,
         to_cpu: bool = False,
         convert_to_tensor: bool = True,
         show_progress_bar: bool = False,
@@ -114,7 +115,7 @@ class VDREncoder(PreTrainedModel):
                 - If topk=-1 or None, activate all the dimensions;
                 - Otherwise, acitvate only top-k dimension. 
             bow (bool): If True, embeds texts into binary token representations.
-            training (bool): If True, keeps gradients for backpropagation. 
+            require_grad (bool): If True, keeps gradients for backpropagation. 
             to_cpu (bool): If True, moves the result to CPU memory.
             convert_to_tensor (bool): If True, returns a Tensor instead of a NumPy array.
             show_progress_bar (bool): If True, displays embedding progress. 
@@ -126,12 +127,13 @@ class VDREncoder(PreTrainedModel):
 
         max_len = max_len or self.config.max_len
         topk = topk or self.config.topk
-        if isinstance(texts, str):
-            texts = [texts]
-        if not training and self.training:
+        texts = [texts] if isinstance(texts, str) else texts
+        is_training = self.training
+
+        if not require_grad:
             self.eval()
 
-        with torch.no_grad() if not training else nullcontext():
+        with torch.no_grad() if not require_grad else nullcontext():
             batch_embs = []
             num_text = len(texts)
             iterator = range(0, num_text, batch_size)
@@ -161,6 +163,10 @@ class VDREncoder(PreTrainedModel):
                 emb = emb.cpu().numpy()
             elif to_cpu:
                 emb = emb.cpu()
+
+        if is_training:
+            self.train()
+            
         return emb
 
     def disentangle(self, text: str, topk: int = 768, visual=False, save_file=None):
@@ -171,7 +177,7 @@ class VDREncoder(PreTrainedModel):
         topk_tokens = self.tokenizer.convert_ids_to_tokens(topk_token_ids)
         results = dict(zip(topk_tokens, topk_values))
         if visual:
-            wordcloud_from_dict(results, topk=topk, save_file=save_file)
+            wordcloud_from_dict(results, max_words=topk, save_file=save_file)
         return results
 
     dst = disentangle

@@ -6,19 +6,19 @@ import sys
 from typing import Tuple
 import hydra
 import torch
-import omegaconf
 from omegaconf import DictConfig, OmegaConf
 from torch.cuda.amp import autocast
 import torch.distributed as dist
 import torch.utils.data.distributed
 
-from src.vdr import Retriever, RetrieverConfig
-from src.vdr.data.biencoder_dataset import BiencoderDatasetsCfg
-from src.vdr.data.ddp_iterators import MultiSetDataIterator, get_data_iterator
-from src.vdr.training.conf_utils import setup_cfg_gpu, set_seed, setup_logger
-from src.vdr.training.model_utils import get_optimizer, get_schedule_linear, CheckpointState
-from src.vdr.training.loss_utils import _do_biencoder_fwd_pass
-from src.vdr.training.ddp_utils import is_master
+from src.ir import Retriever, RetrieverConfig
+from src.ir.utils.biencoder_utils import create_biencoder_batch
+from src.ir.data.biencoder_dataset import BiencoderDatasetsCfg
+from src.ir.data.ddp_iterators import MultiSetDataIterator, get_data_iterator
+from src.ir.training.conf_utils import setup_cfg_gpu, set_seed, setup_logger
+from src.ir.training.model_utils import get_optimizer, get_schedule_linear, CheckpointState
+from src.ir.training.loss_utils import _do_biencoder_fwd_pass
+from src.ir.training.ddp_utils import is_master
 
 logger = logging.getLogger()
 setup_logger(logger)
@@ -43,13 +43,12 @@ class RetrieverTrainer(object):
 
     def init_retriever(self):
         logger.info("***** Initializing components for training *****")
-        _model_cfg = omegaconf.OmegaConf.to_container(self.cfg.biencoder)        
-        retriever_cfg = RetrieverConfig(**_model_cfg)
-
-        if self.cfg.train.model_file is not None:
-            logger.info(f"***** Loading checkpoint from {self.cfg.train.model_file} *****")
-            model = Retriever.from_pretrained(self.cfg.train.model_file, config=retriever_cfg)
+        if self.cfg.model_path:
+            logger.info(f"***** Loading checkpoint from {self.cfg.model_path} *****")
+            model = Retriever.from_pretrained(self.cfg.model_path)
         else:
+            biencoder_cfg = OmegaConf.to_container(self.cfg.biencoder)        
+            retriever_cfg = RetrieverConfig(**biencoder_cfg)
             model = Retriever(retriever_cfg)
 
         if hasattr(self.cfg, "index") and self.cfg.index is not None:
@@ -95,8 +94,6 @@ class RetrieverTrainer(object):
         logger.info(" Total updates=%d", total_updates)
         logger.info(" Warmup updates=%d", warmup_steps)
         scheduler = get_schedule_linear(self.optimizer, warmup_steps, total_updates)
-        eval_step = math.ceil(updates_per_epoch * cfg.train.num_epoch_to_eval)
-        logger.info(" Eval step = %d", eval_step)
         logger.info("***** Training *****")
 
         self.save_checkpoint("0")
@@ -139,7 +136,8 @@ class RetrieverTrainer(object):
             data_iteration = train_data_iterator.get_iteration()
             random.seed(seed + epoch + data_iteration)
             
-            biencoder_batch = self.model.module.create_biencoder_input(
+            biencoder_batch = create_biencoder_batch(
+                self.model.module,
                 samples=samples_batch,
                 insert_title=self.cfg.train.train_insert_title,
                 num_hard_negatives=cfg.train.hard_negatives,
@@ -209,7 +207,7 @@ class RetrieverTrainer(object):
         model_to_save = self.model.module if hasattr(self.model, "module") else self.model
         output_dir = cfg.output_dir if cfg.output_dir else "./"
         cp = os.path.join(output_dir, cfg.save_name_prefix + "_" + suffix)
-        model_to_save.save_pretrained(cp)    
+        model_to_save.save_pretrained(cp, safe_serialization=False) 
         logger.info("Saved checkpoint at %s", cp)
         return cp
 
@@ -230,7 +228,7 @@ def main(cfg: DictConfig):
 
     if cfg.train_datasets and len(cfg.train_datasets) > 0:
         trainer.run_train()
-    elif cfg.train.model_file and cfg.dev_datasets:
+    elif cfg.model_path and cfg.dev_datasets:
         logger.info("No train files are specified. Run validation only. ")
     else:
         logger.info("Neither train_file or dev_file are specified.")

@@ -26,11 +26,6 @@ require_positive: True
 require_hard_negative: True
 train_sampling_rates: 
 
-# cst mask
-cts_mask: False
-cts_mask_weight: 1.0
-cts_mask_norm: False
-
 # info
 log_batch_step: 100
 train_rolling_loss_step: 100

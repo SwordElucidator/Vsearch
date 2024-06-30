@@ -12,8 +12,8 @@ from transformers import AutoTokenizer, PreTrainedModel, PretrainedConfig
 from wordcloud import WordCloud
 
 from .vdr_crossmodal_text import VALID_TOKEN_IDS, VID2LID
-from .sparsify_utils import build_bow_mask, build_topk_mask, elu1p
-from .visualize_utils import wordcloud_from_dict
+from ..utils.sparsify_utils import build_bow_mask, build_topk_mask, elu1p
+from ..utils.visualize_utils import wordcloud_from_dict
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +237,7 @@ class VDRImageEncoder(PreTrainedModel):
         topk_tokens = self.tokenizer.convert_ids_to_tokens(topk_token_ids)
         results = dict(zip(topk_tokens,topk_values))
         if visual:
-            wordcloud_from_dict(results, k=topk, save_file=save_file)
+            wordcloud_from_dict(results, max_words=topk, save_file=save_file)
         return results
 
 
